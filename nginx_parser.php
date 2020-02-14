@@ -5,43 +5,48 @@
  * @copyright Copyright (c) 2020, Kevin MULLER
  * @license GPL
  *
-*/
+ */
 
 if (!isset($argv)) {
     die('Cli ONLY');
 }
 
-if (count($argv) !==3) {
+if (count($argv) !== 3) {
     $base = basename($argv[0]);
     echo "Usage: " . $base . " domain nginxlogfile\nExample : $base test.com access_log\n\n";
 }
 
-$domain=$argv[1];
-$file=$argv[2];
+var_dump($argv);
+$domain = $argv[1];
+$file = $argv[2];
 $type = 'file';
 
-if(!file_exists($file)) die($file.' not found...');
-
-if(isset($argv[3]) && $argv[3]=="-"){
-    $type="stdin";
+if (isset($argv[2]) && $argv[2] == "-") {
+    $type = "stdin";
 }
-printf("Count line number ... ");
-$line=exec(sprintf("/usr/bin/wc -l %s",$file));
-$total_line=explode(' ',$line)[0];
-printf(": %s\n",$total_line);
 
-$database   = 'nginxlog';
-$user       = 'nginxlog';
-$pass       = 'nginxlog';
-$table      = 'nginxlog';
+if ($type == "file" && !file_exists($file)) die($file . ' not found...');
+$total_line = 0;
+if ($type == "file") {
+    printf("Count line number ... ");
+    $line = exec(sprintf("/usr/bin/wc -l %s", $file));
+    $total_line = explode(' ', $line)[0];
+    printf(": %s\n", $total_line);
+}
 
-$pdo = new PDO('mysql:host=localhost;dbname='.$database, $user, $pass);
+
+$database = 'nginxlog';
+$user = 'nginxlog';
+$pass = 'nginxlog';
+$table = 'nginxlog';
+
+$pdo = new PDO('mysql:host=localhost;dbname=' . $database, $user, $pass);
 if (!$pdo) die('error');
 
-$check_table=$pdo->query('DESC '.$table);
-if($check_table===false){
-    echo $table."not exist create it ....\n";
-    $pdo->query('CREATE TABLE `'.$table.'` (
+$check_table = $pdo->query('DESC ' . $table);
+if ($check_table === false) {
+    echo $table . "not exist create it ....\n";
+    $pdo->query('CREATE TABLE `' . $table . '` (
         `id` int(11) NOT NULL AUTO_INCREMENT,
         `domain` varchar(100) NOT NULL,
         `ip` varchar(100) NOT NULL,
@@ -56,6 +61,7 @@ if($check_table===false){
 ) ENGINE=InnoDB  DEFAULT CHARSET=utf8');
 }
 
+$clean = false;
 
 if ($type != 'file') {
     echo "stdin mode ...\n";
@@ -67,8 +73,11 @@ if ($type != 'file') {
 $i = 0;
 $error = 0;
 $bypass = 0;
-echo "Clean $table\n";
-$pdo->query('DELETE FROM '.$table.' where domain="'.$domain.'" ');
+if ($clean) {
+    echo "Clean $table\n";
+    $pdo->query('DELETE FROM ' . $table . ' where domain="' . $domain . '" ');
+}
+
 $sql = "INSERT INTO nginxlog (ip,domain,remote, time, request,statut,byte,referrer,useragent) VALUES (:ip,:domain,:remote, :time, :request,:statut,:byte,:referrer,:useragent)";
 $stmt = $pdo->prepare($sql);
 $avg = 0.00;
@@ -88,12 +97,17 @@ while ($line = fgets($f, 4096)) {
         $ret2 = preg_match('#(?P<verb>.[^ ]*) (?<path>.[^ ]*) (?P<version>.*)#', $matches['request'], $matches2);
         if ($ret2 == 1) {
             $url = parse_url($matches2['path']);
-            $extension = substr($url['path'], -3);
-            if (in_array($extension, ['png', '.js', 'css', 'ico', 'jpg', 'svg', 'gif'])) {
-                $bypass++;
-                continue;
-            } else {
+            if (isset($url['path'])) {
+                $extension = substr($url['path'], -3);
+                if (in_array($extension, ['png', '.js', 'css', 'ico', 'jpg', 'svg', 'gif']) || strpos("/xmlrpc.php", $matches2['path']) === FALSE) {
+                    $bypass++;
+                    if($bypass%1000){
+//                        echo "bypass ".$url['path']."\n";
+                    }
+                    continue;
+                } else {
 #				echo "pass $extension \n";
+                }
             }
         }
 
@@ -108,13 +122,17 @@ while ($line = fgets($f, 4096)) {
             'byte' => $matches['byte'],
             'referrer' => $matches['referrer'],
             'useragent' => $matches['useragent'],
-            'domain'=>$domain
+            'domain' => $domain
         ]);
         if (!$ret) {
             echo "ERROR INSERT\n";
             $error++;
         }
-        $pourcentage = round(($i / $total_line) * 100, 2);
+        if ($total_line != 0) {
+            $pourcentage = round(($i / $total_line) * 100, 2);
+        } else {
+            $pourcentage = "n/a";
+        }
 
         if ($i % $modulo == 0) {
             $total_avg = round(($avg / $modulo) * 1000, 4);
